@@ -1,0 +1,78 @@
+#Docker Compose
+
+version: '3.3'
+
+services:
+  FreeRADIUSv3:
+    image: dockerhub.gemalto.com/sas-agent/fragent:3.2.19-472
+    hostname: FreeRADIUSv3.local
+    container_name: FreeRADIUSv3_customer1
+    restart: always
+
+    #ports:
+    #  - '192.168.41.101:1812:1812/udp' #Only expose this when really needed for MFA only NAS devices - use the backend shared key. All RFC1918 networks are allowed.
+
+    environment:
+      ENCODING_FORMAT: "utf8"
+      TV_URL: "https://cloud.eu.safenetid.com/TokenValidator/TokenValidator.asmx"
+      VERIFY_TV_CERTIFICATE: "no"
+      UPDATER_SCHEDULE_MINS: 0
+      FR_EAPCERTS_KEY_PASSWORD: ""
+      BACKEND_SHARED_SECRET: "******" #Should be different for every docker compose instance and different for every customer - Needs to be the same in the FreeRADIUSv3 container
+
+    volumes:
+      - ${PWD}/sas-files/radiusd.conf:/etc/raddb/radiusd.conf #Modified radiusd.conf to load the clients2.conf
+      - ${PWD}/sas-files/clients2.conf:/etc/raddb/clients2.conf #Use separate clients file because the entrypoint configuration of the image needs to modify/move the original clients.conf file which makes a volume mount impossible.
+      - ${PWD}/sas-files/Agent.bsidkey:/opt/gemalto/mnt/Agent.bsidkey
+      
+
+#################################################################################################################
+
+  freeradius-ldap:
+    image: freeradius/freeradius-server:3.2.0
+    hostname: freeradius-ldap.local
+    container_name: freeradius-ldap_customer1
+    restart: always
+
+    ports:
+      - '192.168.41.102:1645:1645/udp'
+
+    environment:
+      CUSTOMER_REALM_NAME: "customername" #Necessary for every customer to allow SAS to route the request into the right tenant / VS - User never sees the realm / must also be specified in SAS Console!
+      CUSTOMER_ALLOWED_IPRANGE: "0.0.0.0/0" #Eventually, restrict Radius Access per customer IP
+      CUSTOMER_SHARED_SECRET: "******"
+      CUSTOMER_DELIMITER: "-" #Specify if u want to allow customer to add OTP directly in the Password (Example: PW-OTP, Pa$$word-565841) to prevent challenge (when using MobilePass) the delimter must not appear in the PW of Users -empty variable does not enable the feature
+      BACKEND_SHARED_SECRET: "******" #Should be different for every docker compose instance and different for every customer - Needs to be the same in the FreeRADIUSv3 container
+
+      LDAP_SERVER_1: "ldaps://***.eizi.at" #Use "dc01.eizi.at" for LDAP and ldaps://dc01.eiz.at" for LDAPs
+      LDAP_SERVER_2: "ldaps://***.eizi.at"
+      LDAP_PORT: 636 #Use Port 636 for LDAPs
+      LDAP_BIND_DN: "CN=***,OU=***,OU=***,OU=***,DC=eizi,DC=at"
+      LDAP_BIND_PW: "******"
+      LDAP_BASE_DN: "DC=eizi,DC=at"
+      LDAP_USER_SCHEME: "sAMAccountName" # "sAMAccountName" or "userPrincipalName"
+
+    volumes:
+      - ${PWD}/raddb/clients.conf:/etc/freeradius/clients.conf
+      - ${PWD}/raddb/proxy.conf:/etc/freeradius/proxy.conf
+      - ${PWD}/raddb/mods-available/ldap:/etc/freeradius/mods-available/ldap
+      - ${PWD}/raddb/mods-available/ldap:/etc/freeradius/mods-enabled/ldap #Mount /raddb/mods-available/ldap here twice to prevent later symlinking
+      - ${PWD}/raddb/sites-available/default:/etc/freeradius/sites-available/default
+      - ${PWD}/cacerts/cacert.pem:/etc/freeradius/custom-certs/cacert.pem
+
+#################################################################################################################
+
+
+
+#ToDo´s for new customers.
+
+#1) Copy this folder and rename it to SASfreeRadius-customerNAME
+
+#2) Change the enviroment variables as desired
+  #2a) In Case of using LDAPs add the right ca-chain to the file ./cacerts/cacerts.pem - in base64 - no binary format (.der)
+  #2b) Take note of CUSTOMER_REALM_NAME - you have to add it to the SAS Console configuration for proper radius request routing
+  #2c) All enviroment variables which are used in multiple containes/services must have the same values ($BACKEND_SHARED_SECRET)
+
+#3) Assign per customer additional host IPs to the server over the interface config and bind them afterwards to the two containers (Example: '192.168.41.101:1645:1645/udp')
+#4) Copy the whole folder to the second server for and change the  interface config and bind them afterwards to the two containers (Example: '192.168.51.101:1645:1645/udp')
+#3) Run docker-compose up in the base customer folder on both servers to activate the radius service.
