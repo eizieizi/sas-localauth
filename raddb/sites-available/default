@@ -429,9 +429,17 @@ authorize {
 #BEGIN CUSTOM PART
 ########################################################################################
 
+	if (State) { #If already authenticated, and SMS Challege is selected, send to SAS (checks the Radius State Attribute which is sent in response to access-challenge)
+			update request {
+				User-Name := "$ENV{CUSTOMER_REALM_NAME}/%{User-Name}"
+			}
+			update control {
+            Proxy-To-Realm := "sta_realm"
+		}
+	}
 
 	
-	if("$ENV{CUSTOMER_DELIMITER}") { #If the enviroment variable $CUSTOMER_DELIMITER is filled, users PWs are checked id OTP is supplied in the PW
+	if("$ENV{CUSTOMER_DELIMITER}" && !State) { #If the enviroment variable $CUSTOMER_DELIMITER is filled, users PWs are checked id OTP is supplied in the PW
 		if (User-Password =~ /^(.*)\$ENV{CUSTOMER_DELIMITER}(.*)$/) {
 				update request {
 						User-Password := "%{1}"
@@ -465,11 +473,13 @@ authorize {
 			}
 		}
 	}
-	else { #If no delimiter with OTP is specified, trigger PUSH/SMS
+
+	if(!"$ENV{CUSTOMER_DELIMITER}" && !State) { #If the enviroment variable $CUSTOMER_DELIMITER is not used, users PWs are checked id OTP is supplied in the PW
 		ldap.authenticate
 		if (!ok) {
 			reject
 		}
+
 		update request {
 			User-Name := "$ENV{CUSTOMER_REALM_NAME}/%{User-Name}" #Update Username and prepend the customer realm name to allow SAS Cloud to map the user into the right account (realm/username@domain.at)
 			User-Password := ""
